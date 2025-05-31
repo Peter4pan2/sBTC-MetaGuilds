@@ -203,7 +203,115 @@
   )
 )
 
+;; Update product phase
+(define-public (modify-product-phase (product-id uint) (new-phase uint))
+  (let 
+    (
+      (product (unwrap! (map-get? product-data {product-id: product-id}) ERR_PRODUCT_NOT_FOUND))
+    )
+    (asserts! (is-valid-product-id product-id) ERR_PRODUCT_NOT_FOUND)
+    (asserts! (is-valid-phase new-phase) ERR_INVALID_PHASE)
+    (asserts! 
+      (or 
+        (is-admin tx-sender)
+        (is-eq (get creator product) tx-sender)
+      ) 
+      ERR_NO_PERMISSION
+    )
+
+    (map-set product-data 
+      {product-id: product-id}
+      (merge product 
+        {
+          current-phase: new-phase,
+          timeline: (unwrap-panic 
+            (as-max-len? 
+              (append (get timeline product) {phase: new-phase, moment: (get-current-moment)}) 
+              u10
+            )
+          )
+        }
+      )
+    )
+    (ok true)
+  )
+)
 
 
+;; Add oversight entity with additional validation
+(define-public (add-oversight-entity (entity principal) (validation-type uint))
+  (begin
+    (asserts! (is-admin tx-sender) ERR_NO_PERMISSION)
+    (asserts! (is-valid-validation-type validation-type) ERR_INVALID_VALIDATION)
+    (asserts! (is-valid-entity entity) ERR_NO_PERMISSION)
 
+    ;; After validation, we can safely use the entity
+    (map-set oversight-entities
+      {entity: entity, validation-type: validation-type}
+      {authorized: true}
+    )
+    (ok true)
+  )
+)
 
+;; Add validation to product
+(define-public (attach-validation (product-id uint) (validation-type uint))
+  (begin
+    (asserts! (is-valid-product-id product-id) ERR_PRODUCT_NOT_FOUND)
+    (asserts! (is-valid-validation-type validation-type) ERR_INVALID_VALIDATION)
+    (asserts! (is-oversight-entity tx-sender validation-type) ERR_NO_PERMISSION)
+
+    (asserts! 
+      (is-none 
+        (map-get? product-validations {product-id: product-id, validation-type: validation-type})
+      )
+      ERR_VALIDATION_ALREADY_EXISTS
+    )
+
+    (let
+      ((validated-product-id product-id)
+       (validated-validation-type validation-type))
+      (map-set product-validations
+        {product-id: validated-product-id, validation-type: validated-validation-type}
+        {
+          validator: tx-sender,
+          moment: (get-current-moment),
+          active: true
+        }
+      )
+      (ok true)
+    )
+  )
+)
+
+;; Revoke validation
+(define-public (withdraw-validation (product-id uint) (validation-type uint))
+  (begin
+    (asserts! (is-valid-product-id product-id) ERR_PRODUCT_NOT_FOUND)
+    (asserts! (is-valid-validation-type validation-type) ERR_INVALID_VALIDATION)
+
+    (let
+      (
+        (validation (unwrap! 
+          (map-get? product-validations {product-id: product-id, validation-type: validation-type})
+          ERR_INVALID_VALIDATION
+        ))
+        (validated-product-id product-id)
+        (validated-validation-type validation-type)
+      )
+      (asserts! 
+        (or
+          (is-admin tx-sender)
+          (is-eq (get validator validation) tx-sender)
+        )
+        ERR_NO_PERMISSION
+      )
+
+      (map-set product-validations
+        {product-id: validated-product-id, validation-type: validated-validation-type}
+        (merge validation {active: false})
+      )
+      (ok true)
+    )
+  )
+)
